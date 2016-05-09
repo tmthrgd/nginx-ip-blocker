@@ -18,16 +18,16 @@ typedef struct {
 	/* fd may have been truncated behind our backs, be warned */
 	ngx_ip_blocker_shm_st *addr;
 	size_t size;
-} ngx_http_ip_blocker_srv_conf_st;
+} ngx_http_ip_blocker_loc_conf_st;
 
 static ngx_int_t ngx_http_ip_blocker_init(ngx_conf_t *cf);
 
-static void *ngx_http_ip_blocker_create_srv_conf(ngx_conf_t *cf);
-static char *ngx_http_ip_blocker_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child);
+static void *ngx_http_ip_blocker_create_loc_conf(ngx_conf_t *cf);
+static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
 
 static void ngx_http_ip_blocker_cleanup(void *data);
 
-static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_srv_conf_st *conf,
+static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_loc_conf_st *conf,
 		ngx_log_t *log);
 
 static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r);
@@ -42,10 +42,10 @@ static ngx_inline void ngx_ip_blocker_rwlock_runlock(ngx_ip_blocker_rwlock_st *r
 
 static ngx_command_t ngx_http_ip_blocker_module_commands[] = {
 	{ ngx_string("ip_blocker"),
-	  NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
+	  NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
 	  ngx_conf_set_str_slot,
-	  NGX_HTTP_SRV_CONF_OFFSET,
-	  offsetof(ngx_http_ip_blocker_srv_conf_st, name),
+	  NGX_HTTP_LOC_CONF_OFFSET,
+	  offsetof(ngx_http_ip_blocker_loc_conf_st, name),
 	  NULL },
 
 	ngx_null_command
@@ -58,11 +58,11 @@ static ngx_http_module_t ngx_http_ip_blocker_module_ctx = {
 	NULL,                                /* create main configuration */
 	NULL,                                /* init main configuration */
 
-	ngx_http_ip_blocker_create_srv_conf, /* create server configuration */
-	ngx_http_ip_blocker_merge_srv_conf,  /* merge server configuration */
+	NULL,                                /* create server configuration */
+	NULL,                                /* merge server configuration */
 
-	NULL,                                /* create location configuration */
-	NULL                                 /* merge location configuration */
+	ngx_http_ip_blocker_create_loc_conf, /* create location configuration */
+	ngx_http_ip_blocker_merge_loc_conf   /* merge location configuration */
 };
 
 ngx_module_t ngx_http_ip_blocker_module = {
@@ -96,11 +96,11 @@ static ngx_int_t ngx_http_ip_blocker_init(ngx_conf_t *cf)
 	return NGX_OK;
 }
 
-static void *ngx_http_ip_blocker_create_srv_conf(ngx_conf_t *cf)
+static void *ngx_http_ip_blocker_create_loc_conf(ngx_conf_t *cf)
 {
-	ngx_http_ip_blocker_srv_conf_st *conf;
+	ngx_http_ip_blocker_loc_conf_st *conf;
 
-	conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_ip_blocker_srv_conf_st));
+	conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_ip_blocker_loc_conf_st));
 	if (!conf) {
 		return NULL;
 	}
@@ -119,10 +119,10 @@ static void *ngx_http_ip_blocker_create_srv_conf(ngx_conf_t *cf)
 	return conf;
 }
 
-static char *ngx_http_ip_blocker_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
+static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 {
-	const ngx_http_ip_blocker_srv_conf_st *prev = parent;
-	ngx_http_ip_blocker_srv_conf_st *conf = child;
+	const ngx_http_ip_blocker_loc_conf_st *prev = parent;
+	ngx_http_ip_blocker_loc_conf_st *conf = child;
 	ngx_pool_cleanup_t *cln;
 	struct stat sb;
 
@@ -174,7 +174,7 @@ static char *ngx_http_ip_blocker_merge_srv_conf(ngx_conf_t *cf, void *parent, vo
 
 static void ngx_http_ip_blocker_cleanup(void *data)
 {
-	ngx_http_ip_blocker_srv_conf_st *conf = data;
+	ngx_http_ip_blocker_loc_conf_st *conf = data;
 
 	if (conf->addr != MAP_FAILED) {
 		munmap(conf->addr, conf->size);
@@ -185,7 +185,7 @@ static void ngx_http_ip_blocker_cleanup(void *data)
 	}
 }
 
-static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_srv_conf_st *conf,
+static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_loc_conf_st *conf,
 		ngx_log_t *log)
 {
 	ngx_ip_blocker_shm_st *addr;
@@ -227,7 +227,7 @@ static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_srv_co
 
 static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 {
-	ngx_http_ip_blocker_srv_conf_st *conf;
+	ngx_http_ip_blocker_loc_conf_st *conf;
 	ngx_http_core_loc_conf_t *clcf;
 	u_char *base, *addr;
 	size_t len, addr_len;
@@ -237,7 +237,7 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 #endif /* NGX_HAVE_INET6 */
 	int (*compare)(const void *a, const void *b);
 
-	conf = ngx_http_get_module_srv_conf(r, ngx_http_ip_blocker_module);
+	conf = ngx_http_get_module_loc_conf(r, ngx_http_ip_blocker_module);
 	if (!conf || !conf->name.len) {
 		return NGX_DECLINED;
 	}
