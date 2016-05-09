@@ -242,18 +242,25 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 		return NGX_DECLINED;
 	}
 
+	ngx_ip_blocker_rwlock_rlock(&conf->addr->lock);
+
+	if (ngx_http_ip_blocker_remap(conf, r->connection->log) != NGX_OK) {
+		ngx_ip_blocker_rwlock_runlock(&conf->addr->lock);
+
+		return NGX_ERROR;
+	}
+
 	switch (r->connection->sockaddr->sa_family) {
 		case AF_INET:
 			sin = (struct sockaddr_in *)r->connection->sockaddr;
+
+			base = (u_char *)conf->addr + conf->addr->ip4.base;
+			len = conf->addr->ip4.len;
 
 			addr = (u_char *)&sin->sin_addr.s_addr;
 			addr_len = 4;
 
 			compare = ngx_http_ip_blocker_ip4_compare;
-
-			ngx_ip_blocker_rwlock_rlock(&conf->addr->lock);
-			base = (u_char *)conf->addr + conf->addr->ip4.base;
-			len = conf->addr->ip4.len;
 			break;
 #if NGX_HAVE_INET6
 		case AF_INET6:
@@ -263,32 +270,25 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 			addr_len = 16;
 
 			if (IN6_IS_ADDR_V4MAPPED(&sin6->sin6_addr)) {
+				base = (u_char *)conf->addr + conf->addr->ip4.base;
+				len = conf->addr->ip4.len;
+
 				addr += 12;
 				addr_len -= 12;
 
 				compare = ngx_http_ip_blocker_ip4_compare;
-
-				ngx_ip_blocker_rwlock_rlock(&conf->addr->lock);
-				base = (u_char *)conf->addr + conf->addr->ip4.base;
-				len = conf->addr->ip4.len;
 			} else {
-				compare = ngx_http_ip_blocker_ip6_compare;
-
-				ngx_ip_blocker_rwlock_rlock(&conf->addr->lock);
 				base = (u_char *)conf->addr + conf->addr->ip6.base;
 				len = conf->addr->ip6.len;
+
+				compare = ngx_http_ip_blocker_ip6_compare;
 			}
 
 			break;
 #endif /* NGX_HAVE_INET6 */
 		default:
+			ngx_ip_blocker_rwlock_runlock(&conf->addr->lock);
 			return NGX_DECLINED;
-	}
-
-	if (ngx_http_ip_blocker_remap(conf, r->connection->log) != NGX_OK) {
-		ngx_ip_blocker_rwlock_runlock(&conf->addr->lock);
-
-		return NGX_ERROR;
 	}
 
 	if (!len || !bsearch(addr, base, len / addr_len, addr_len, compare)) {
