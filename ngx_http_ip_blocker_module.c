@@ -128,7 +128,7 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 
 	ngx_conf_merge_str_value(conf->name, prev->name, "");
 
-	if (!conf->name.len) {
+	if (!conf->name.len || ngx_strcmp(conf->name.data, "off") == 0) {
 		return NGX_CONF_OK;
 	}
 
