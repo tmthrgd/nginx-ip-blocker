@@ -208,6 +208,8 @@ static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_loc_co
 		return NGX_OK;
 	}
 
+	conf->revision = revision;
+
 	munmap(conf->addr, conf->size);
 	conf->addr = MAP_FAILED;
 
