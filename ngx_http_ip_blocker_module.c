@@ -166,7 +166,7 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 
 	conf->size = sb.st_size;
 
-	conf->revision = ngx_atomic_fetch_add(&conf->addr->revision, 0);
+	conf->revision = conf->addr->revision;
 
 	if (conf->size < sizeof(ngx_ip_blocker_shm_st)
 		|| conf->size < sizeof(ngx_ip_blocker_shm_st)
@@ -205,7 +205,7 @@ static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_loc_co
 	uint32_t revision;
 	struct stat sb;
 
-	revision = ngx_atomic_fetch_add(&conf->addr->revision, 0);
+	revision = conf->addr->revision;
 	if (revision == conf->revision) {
 		return NGX_OK;
 	}
