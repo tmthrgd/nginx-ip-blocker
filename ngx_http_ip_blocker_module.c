@@ -167,9 +167,9 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 		&& conf->size >= sizeof(ngx_ip_blocker_shm_st)
 			+ conf->addr->ip4.len + conf->addr->ip6.len
 		&& (!conf->addr->ip4.len
-			|| conf->addr->ip4.base >= (off_t)sizeof(ngx_ip_blocker_shm_st))
+			|| conf->addr->ip4.base >= (ssize_t)sizeof(ngx_ip_blocker_shm_st))
 		&& (!conf->addr->ip6.len
-			|| conf->addr->ip6.base >= (off_t)sizeof(ngx_ip_blocker_shm_st))
+			|| conf->addr->ip6.base >= (ssize_t)sizeof(ngx_ip_blocker_shm_st))
 		&& conf->addr->ip4.base + conf->addr->ip4.len <= conf->size
 		&& conf->addr->ip6.base + conf->addr->ip6.len <= conf->size);
 
@@ -216,9 +216,9 @@ static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_loc_co
 		&& (size_t)sb.st_size >= sizeof(ngx_ip_blocker_shm_st)
 			+ addr->ip4.len + addr->ip6.len
 		&& (!addr->ip4.len
-			|| addr->ip4.base >= (off_t)sizeof(ngx_ip_blocker_shm_st))
+			|| addr->ip4.base >= (ssize_t)sizeof(ngx_ip_blocker_shm_st))
 		&& (!addr->ip6.len
-			|| addr->ip6.base >= (off_t)sizeof(ngx_ip_blocker_shm_st))
+			|| addr->ip6.base >= (ssize_t)sizeof(ngx_ip_blocker_shm_st))
 		&& addr->ip4.base + addr->ip4.len <= (size_t)sb.st_size
 		&& addr->ip6.base + addr->ip6.len <= (size_t)sb.st_size);
 

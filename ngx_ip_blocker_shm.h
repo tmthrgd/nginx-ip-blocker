@@ -12,9 +12,9 @@ typedef struct {
 } ngx_ip_blocker_rwlock_st;
 
 typedef struct {
-	volatile struct {
-		off_t base;
-		size_t len;
+	struct {
+		volatile ssize_t base;
+		volatile size_t len;
 	} ip4, ip6;
 
 	ngx_ip_blocker_rwlock_st lock;
