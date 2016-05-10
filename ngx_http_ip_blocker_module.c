@@ -166,11 +166,16 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 
 	conf->size = sb.st_size;
 
+	if (conf->size < sizeof(ngx_ip_blocker_shm_st)) {
+		ngx_log_error(NGX_LOG_EMERG, cf->log, 0, "invalid shared memory");
+		return NGX_CONF_ERROR;
+	}
+
+	ngx_ip_blocker_rwlock_rlock(&conf->addr->lock);
+
 	conf->revision = conf->addr->revision;
 
-	if (conf->size < sizeof(ngx_ip_blocker_shm_st)
-		|| conf->size < sizeof(ngx_ip_blocker_shm_st)
-			+ conf->addr->ip4.len + conf->addr->ip6.len
+	if (conf->size < sizeof(ngx_ip_blocker_shm_st) + conf->addr->ip4.len + conf->addr->ip6.len
 		|| (conf->addr->ip4.len
 			&& conf->addr->ip4.base < (ssize_t)sizeof(ngx_ip_blocker_shm_st))
 		|| (conf->addr->ip6.len
@@ -179,9 +184,13 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 		|| conf->addr->ip6.base + conf->addr->ip6.len > conf->size
 		|| conf->addr->ip4.len % 4 != 0
 		|| conf->addr->ip6.len % 16 != 0) {
+		ngx_ip_blocker_rwlock_runlock(&conf->addr->lock);
+
 		ngx_log_error(NGX_LOG_EMERG, cf->log, 0, "invalid shared memory");
 		return NGX_CONF_ERROR;
 	}
+
+	ngx_ip_blocker_rwlock_runlock(&conf->addr->lock);
 
 	return NGX_CONF_OK;
 }
