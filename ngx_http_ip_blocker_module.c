@@ -176,7 +176,9 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 		|| (conf->addr->ip6.len
 			&& conf->addr->ip6.base < (ssize_t)sizeof(ngx_ip_blocker_shm_st))
 		|| conf->addr->ip4.base + conf->addr->ip4.len > conf->size
-		|| conf->addr->ip6.base + conf->addr->ip6.len > conf->size) {
+		|| conf->addr->ip6.base + conf->addr->ip6.len > conf->size
+		|| conf->addr->ip4.len % 4 != 0
+		|| conf->addr->ip6.len % 16 != 0) {
 		ngx_log_error(NGX_LOG_EMERG, cf->log, 0, "invalid shared memory");
 		return NGX_CONF_ERROR;
 	}
@@ -234,7 +236,9 @@ static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_loc_co
 		|| (conf->addr->ip6.len
 			&& conf->addr->ip6.base < (ssize_t)sizeof(ngx_ip_blocker_shm_st))
 		|| conf->addr->ip4.base + conf->addr->ip4.len > conf->size
-		|| conf->addr->ip6.base + conf->addr->ip6.len > conf->size) {
+		|| conf->addr->ip6.base + conf->addr->ip6.len > conf->size
+		|| conf->addr->ip4.len % 4 != 0
+		|| conf->addr->ip6.len % 16 != 0) {
 		munmap(conf->addr, conf->size);
 		conf->addr = MAP_FAILED;
 
