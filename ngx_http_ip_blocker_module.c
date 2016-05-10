@@ -325,6 +325,16 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 	size_t i;
 	ngx_int_t rc, out_rc;
 
+	switch (r->connection->sockaddr->sa_family) {
+		case AF_INET:
+#if NGX_HAVE_INET6
+		case AF_INET6:
+#endif /* NGX_HAVE_INET6 */
+			break;
+		default:
+			return NGX_DECLINED;
+	}
+
 	conf = ngx_http_get_module_loc_conf(r, ngx_http_ip_blocker_module);
 	if (!conf || !conf->enabled) {
 		return NGX_DECLINED;
@@ -425,7 +435,7 @@ static ngx_int_t ngx_ip_blocker_process_rule(ngx_http_request_t *r, ngx_http_ip_
 #endif /* NGX_HAVE_INET6 */
 		default:
 			ngx_ip_blocker_rwlock_runlock(&rule->addr->lock);
-			return NGX_DECLINED;
+			return NGX_ERROR;
 	}
 
 	if (len && bsearch(addr, base, len / addr_len, addr_len, compare)) {
