@@ -132,7 +132,7 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 	ngx_str_t *name;
 	ngx_http_ip_blocker_ruleset_st *rule;
 	ngx_pool_cleanup_t *cln;
-	size_t i, start = 0;
+	size_t i;
 	struct stat sb;
 
 	ngx_conf_merge_ptr_value(conf->name, prev->name, NULL);
@@ -144,12 +144,8 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 	name = conf->name->elts;
 	for (i = 0; i < conf->name->nelts; i++) {
 		if (ngx_strcmp(name[i].data, "off") == 0) {
-			start = i + 1;
+			return NGX_CONF_OK;
 		}
-	}
-
-	if (start == conf->name->nelts) {
-		return NGX_CONF_OK;
 	}
 
 	if (ngx_array_init(&conf->rules, cf->pool, conf->name->nelts,
@@ -167,11 +163,7 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 
 	conf->enabled = 1;
 
-	for (i = start; i < conf->name->nelts; i++) {
-		if (ngx_strcmp(name[i].data, "off") == 0) {
-			continue;
-		}
-
+	for (i = 0; i < conf->name->nelts; i++) {
 		rule = ngx_array_push(&conf->rules);
 		if (!rule) {
 			return NGX_CONF_ERROR;
