@@ -324,7 +324,7 @@ static int ngx_http_ip_blocker_ip6_compare(const void *a, const void *b)
 // rlock locks rw for reading.
 static ngx_inline void ngx_ip_blocker_rwlock_rlock(ngx_ip_blocker_rwlock_st *rw)
 {
-	if (ngx_atomic_fetch_add(&rw->reader_count, 1) < 0) {
+	if (ngx_atomic_fetch_add(&rw->reader_count, 1) < -1) {
 		// A writer is pending, wait for it.
 		sem_wait(&rw->writer_sem);
 	}
@@ -339,11 +339,11 @@ static ngx_inline void ngx_ip_blocker_rwlock_runlock(ngx_ip_blocker_rwlock_st *r
 	int32_t r;
 
 	r = ngx_atomic_fetch_add(&rw->reader_count, -1);
-	if (r < 0) {
-		assert(r + 1 != 0 && r + 1 != -NGX_IP_BLOCKER_MAX_READERS);
+	if (r < 1) {
+		assert(r != 0 && r != -NGX_IP_BLOCKER_MAX_READERS);
 
 		// A writer is pending.
-		if (ngx_atomic_fetch_add(&rw->reader_wait, -1) == 0) {
+		if (ngx_atomic_fetch_add(&rw->reader_wait, -1) == 1) {
 			// The last reader unblocks the writer.
 			sem_post(&rw->writer_sem);
 		}
