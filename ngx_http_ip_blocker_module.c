@@ -13,8 +13,12 @@
 typedef struct {
 	int enabled;
 
-	ngx_str_t name;
+	ngx_array_t *name;
 
+	ngx_array_t rules;
+} ngx_http_ip_blocker_loc_conf_st;
+
+typedef struct {
 	int fd;
 
 	/* fd may have been truncated behind our backs, be warned */
@@ -22,7 +26,7 @@ typedef struct {
 	size_t size;
 
 	uint32_t revision;
-} ngx_http_ip_blocker_loc_conf_st;
+} ngx_http_ip_blocker_ruleset_st;
 
 static ngx_int_t ngx_http_ip_blocker_init(ngx_conf_t *cf);
 
@@ -31,11 +35,12 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 
 static void ngx_http_ip_blocker_cleanup(void *data);
 
-static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_loc_conf_st *conf,
+static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_ruleset_st *rule,
 		ngx_log_t *log);
-static ngx_inline ngx_int_t ngx_http_ip_blocker_check_shm(ngx_http_ip_blocker_loc_conf_st *conf);
+static ngx_inline ngx_int_t ngx_http_ip_blocker_check_shm(ngx_http_ip_blocker_ruleset_st *rule);
 
 static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_ip_blocker_process_rule(ngx_http_request_t *r, ngx_http_ip_blocker_ruleset_st *rule);
 
 static int ngx_http_ip_blocker_ip4_compare(const void *a, const void *b);
 #if NGX_HAVE_INET6
@@ -48,7 +53,7 @@ static ngx_inline void ngx_ip_blocker_rwlock_runlock(ngx_ip_blocker_rwlock_st *r
 static ngx_command_t ngx_http_ip_blocker_module_commands[] = {
 	{ ngx_string("ip_blocker"),
 	  NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LMT_CONF|NGX_CONF_TAKE1,
-	  ngx_conf_set_str_slot,
+	  ngx_conf_set_str_array_slot,
 	  NGX_HTTP_LOC_CONF_OFFSET,
 	  offsetof(ngx_http_ip_blocker_loc_conf_st, name),
 	  NULL },
@@ -113,15 +118,10 @@ static void *ngx_http_ip_blocker_create_loc_conf(ngx_conf_t *cf)
 	/*
 	 * set by ngx_pcalloc():
 	 *
-	 *     conf->name = { 0, NULL };
-	 *
 	 *     conf->enabled = 0;
-	 *     conf->size = 0;
 	 */
 
-	conf->fd = -1;
-	conf->addr = MAP_FAILED;
-
+	conf->name = NGX_CONF_UNSET_PTR;
 	return conf;
 }
 
@@ -129,16 +129,33 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 {
 	const ngx_http_ip_blocker_loc_conf_st *prev = parent;
 	ngx_http_ip_blocker_loc_conf_st *conf = child;
+	ngx_str_t *name;
+	ngx_http_ip_blocker_ruleset_st *rule;
 	ngx_pool_cleanup_t *cln;
+	size_t i, start = 0;
 	struct stat sb;
 
-	ngx_conf_merge_str_value(conf->name, prev->name, "");
+	ngx_conf_merge_ptr_value(conf->name, prev->name, NULL);
 
-	if (!conf->name.len || ngx_strcmp(conf->name.data, "off") == 0) {
+	if (!conf->name || !conf->name->nelts) {
 		return NGX_CONF_OK;
 	}
 
-	conf->enabled = 1;
+	name = conf->name->elts;
+	for (i = 0; i < conf->name->nelts; i++) {
+		if (ngx_strcmp(name[i].data, "off") == 0) {
+			start = i + 1;
+		}
+	}
+
+	if (start == conf->name->nelts) {
+		return NGX_CONF_OK;
+	}
+
+	if (ngx_array_init(&conf->rules, cf->pool, conf->name->nelts,
+			sizeof(ngx_http_ip_blocker_ruleset_st)) != NGX_OK) {
+		return NGX_CONF_ERROR;
+	}
 
 	cln = ngx_pool_cleanup_add(cf->pool, 0);
 	if (!cln) {
@@ -148,55 +165,72 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 	cln->handler = ngx_http_ip_blocker_cleanup;
 	cln->data = conf;
 
-	conf->fd = shm_open((const char *)conf->name.data, O_RDWR, 0);
-	if (conf->fd == -1) {
-		ngx_log_error(NGX_LOG_EMERG, cf->log, ngx_errno, "shm_open failed");
-		return NGX_CONF_ERROR;
-	}
+	conf->enabled = 1;
 
-	if (fstat(conf->fd, &sb) == -1) {
-		ngx_log_error(NGX_LOG_EMERG, cf->log, ngx_errno, "fstat failed");
-		return NGX_CONF_ERROR;
-	}
+	for (i = start; i < conf->name->nelts; i++) {
+		if (ngx_strcmp(name[i].data, "off") == 0) {
+			continue;
+		}
 
-	conf->addr = mmap(NULL, sb.st_size, PROT_READ|PROT_WRITE, MAP_SHARED, conf->fd, 0);
-	if (conf->addr == MAP_FAILED) {
-		ngx_log_error(NGX_LOG_EMERG, cf->log, ngx_errno, "mmap failed");
-		return NGX_CONF_ERROR;
-	}
-
-	conf->size = sb.st_size;
-
-	if (conf->size < sizeof(ngx_ip_blocker_shm_st)) {
-		ngx_log_error(NGX_LOG_EMERG, cf->log, 0, "invalid shared memory");
-		return NGX_CONF_ERROR;
-	}
-
-	ngx_ip_blocker_rwlock_rlock(&conf->addr->lock);
-
-	conf->revision = conf->addr->revision;
-
-	if (fstat(conf->fd, &sb) == -1) {
-		ngx_log_error(NGX_LOG_EMERG, cf->log, ngx_errno, "fstat failed");
-		return NGX_CONF_ERROR;
-	}
-
-	if ((size_t)sb.st_size != conf->size) {
-		/* shm has changed since we mmaped it (unlikely but possible) */
-		conf->revision--;
-
-		/* runlock is called inside of remap iff NGX_ERROR is returned */
-		if (ngx_http_ip_blocker_remap(conf, cf->log) != NGX_OK) {
+		rule = ngx_array_push(&conf->rules);
+		if (!rule) {
 			return NGX_CONF_ERROR;
 		}
-	} else if (ngx_http_ip_blocker_check_shm(conf) != NGX_OK) {
-		ngx_ip_blocker_rwlock_runlock(&conf->addr->lock);
 
-		ngx_log_error(NGX_LOG_EMERG, cf->log, 0, "invalid shared memory");
-		return NGX_CONF_ERROR;
+		ngx_memzero(rule, sizeof(ngx_http_ip_blocker_ruleset_st));
+		rule->addr = MAP_FAILED;
+
+		rule->fd = shm_open((const char *)name[i].data, O_RDWR, 0);
+		if (rule->fd == -1) {
+			ngx_log_error(NGX_LOG_EMERG, cf->log, ngx_errno, "shm_open failed");
+			return NGX_CONF_ERROR;
+		}
+
+		if (fstat(rule->fd, &sb) == -1) {
+			ngx_log_error(NGX_LOG_EMERG, cf->log, ngx_errno, "fstat failed");
+			return NGX_CONF_ERROR;
+		}
+
+		rule->addr = mmap(NULL, sb.st_size, PROT_READ|PROT_WRITE, MAP_SHARED, rule->fd, 0);
+		if (rule->addr == MAP_FAILED) {
+			ngx_log_error(NGX_LOG_EMERG, cf->log, ngx_errno, "mmap failed");
+			return NGX_CONF_ERROR;
+		}
+
+		rule->size = sb.st_size;
+
+		if (rule->size < sizeof(ngx_ip_blocker_shm_st)) {
+			ngx_log_error(NGX_LOG_EMERG, cf->log, 0, "invalid shared memory");
+			return NGX_CONF_ERROR;
+		}
+
+		ngx_ip_blocker_rwlock_rlock(&rule->addr->lock);
+
+		rule->revision = rule->addr->revision;
+
+		if (fstat(rule->fd, &sb) == -1) {
+			ngx_ip_blocker_rwlock_runlock(&rule->addr->lock);
+
+			ngx_log_error(NGX_LOG_EMERG, cf->log, ngx_errno, "fstat failed");
+			return NGX_CONF_ERROR;
+		}
+
+		if ((size_t)sb.st_size != rule->size) {
+			/* shm has changed since we mmaped it (unlikely but possible) */
+
+			/* runlock is called inside of remap iff NGX_ERROR is returned */
+			if (ngx_http_ip_blocker_remap(rule, cf->log) != NGX_OK) {
+				return NGX_CONF_ERROR;
+			}
+		} else if (ngx_http_ip_blocker_check_shm(rule) != NGX_OK) {
+			ngx_ip_blocker_rwlock_runlock(&rule->addr->lock);
+
+			ngx_log_error(NGX_LOG_EMERG, cf->log, 0, "invalid shared memory");
+			return NGX_CONF_ERROR;
+		}
+
+		ngx_ip_blocker_rwlock_runlock(&rule->addr->lock);
 	}
-
-	ngx_ip_blocker_rwlock_runlock(&conf->addr->lock);
 
 	return NGX_CONF_OK;
 }
@@ -204,65 +238,65 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 static void ngx_http_ip_blocker_cleanup(void *data)
 {
 	ngx_http_ip_blocker_loc_conf_st *conf = data;
+	ngx_http_ip_blocker_ruleset_st *rule;
+	size_t i;
 
-	if (conf->addr != MAP_FAILED) {
-		munmap(conf->addr, conf->size);
+	rule = conf->rules.elts;
+	for (i = 0; i < conf->rules.nelts; i++) {
+		if (rule[i].addr != MAP_FAILED) {
+			munmap(rule[i].addr, rule[i].size);
 
-		conf->addr = MAP_FAILED;
-		conf->size = 0; /* not strictly needed */
-	}
+			rule[i].addr = MAP_FAILED;
+			rule[i].size = 0; /* not strictly needed */
+		}
 
-	if (conf->fd != -1) {
-		close(conf->fd);
+		if (rule[i].fd != -1) {
+			close(rule[i].fd);
+		}
 	}
 }
 
-static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_loc_conf_st *conf,
+/* rlock must be held before calling remap */
+static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_ruleset_st *rule,
 		ngx_log_t *log)
 {
-	uint32_t revision;
 	ngx_ip_blocker_shm_st *addr;
 	size_t size;
 	struct stat sb;
 
-	revision = conf->addr->revision;
-	if (revision == conf->revision) {
-		return NGX_OK;
-	}
+	addr = rule->addr;
+	size = rule->size;
+	rule->addr = MAP_FAILED;
+	rule->size = 0; /* not strictly needed */
 
-	conf->revision = revision;
-
-	addr = conf->addr;
-	size = conf->size;
-	conf->addr = MAP_FAILED;
-	conf->size = 0; /* not strictly needed */
-
-	if (fstat(conf->fd, &sb) == -1) {
+	if (fstat(rule->fd, &sb) == -1) {
 		ngx_log_error(NGX_LOG_EMERG, log, ngx_errno, "fstat failed");
 		goto error;
 	}
 
-	conf->addr = mmap(NULL, sb.st_size, PROT_READ|PROT_WRITE, MAP_SHARED, conf->fd, 0);
-	if (conf->addr == MAP_FAILED) {
+	rule->addr = mmap(NULL, sb.st_size, PROT_READ|PROT_WRITE, MAP_SHARED, rule->fd, 0);
+	if (rule->addr == MAP_FAILED) {
 		ngx_log_error(NGX_LOG_EMERG, log, ngx_errno, "mmap failed");
 		goto error;
 	}
 
-	conf->size = sb.st_size;
+	rule->size = sb.st_size;
 
-	if (ngx_http_ip_blocker_check_shm(conf) != NGX_OK) {
-		munmap(conf->addr, conf->size);
-		conf->addr = MAP_FAILED;
+	if (ngx_http_ip_blocker_check_shm(rule) != NGX_OK) {
+		munmap(rule->addr, rule->size);
+		rule->addr = MAP_FAILED;
 
 		ngx_log_error(NGX_LOG_EMERG, log, 0, "invalid shared memory");
 		goto error;
 	}
 
+	rule->revision = rule->addr->revision;
+
 	munmap(addr, size);
 	return NGX_OK;
 
 error:
-	if (!conf->size || conf->size >= sizeof(ngx_ip_blocker_shm_st)) {
+	if (!rule->size || rule->size >= sizeof(ngx_ip_blocker_shm_st)) {
 		ngx_ip_blocker_rwlock_runlock(&addr->lock);
 	} else {
 		ngx_log_error(NGX_LOG_EMERG, log, 0, "failed to release read lock");
@@ -272,19 +306,19 @@ error:
 	return NGX_ERROR;
 }
 
-static ngx_inline ngx_int_t ngx_http_ip_blocker_check_shm(ngx_http_ip_blocker_loc_conf_st *conf)
+static ngx_inline ngx_int_t ngx_http_ip_blocker_check_shm(ngx_http_ip_blocker_ruleset_st *rule)
 {
-	if (conf->size < sizeof(ngx_ip_blocker_shm_st)
-		|| conf->size < sizeof(ngx_ip_blocker_shm_st)
-			+ conf->addr->ip4.len + conf->addr->ip6.len
-		|| (conf->addr->ip4.len
-			&& conf->addr->ip4.base < (ssize_t)sizeof(ngx_ip_blocker_shm_st))
-		|| (conf->addr->ip6.len
-			&& conf->addr->ip6.base < (ssize_t)sizeof(ngx_ip_blocker_shm_st))
-		|| conf->addr->ip4.base + conf->addr->ip4.len > conf->size
-		|| conf->addr->ip6.base + conf->addr->ip6.len > conf->size
-		|| conf->addr->ip4.len % 4 != 0
-		|| conf->addr->ip6.len % 16 != 0) {
+	if (rule->size < sizeof(ngx_ip_blocker_shm_st)
+		|| rule->size < sizeof(ngx_ip_blocker_shm_st)
+			+ rule->addr->ip4.len + rule->addr->ip6.len
+		|| (rule->addr->ip4.len
+			&& rule->addr->ip4.base < (ssize_t)sizeof(ngx_ip_blocker_shm_st))
+		|| (rule->addr->ip6.len
+			&& rule->addr->ip6.base < (ssize_t)sizeof(ngx_ip_blocker_shm_st))
+		|| rule->addr->ip4.base + rule->addr->ip4.len > rule->size
+		|| rule->addr->ip6.base + rule->addr->ip6.len > rule->size
+		|| rule->addr->ip4.len % 4 != 0
+		|| rule->addr->ip6.len % 16 != 0) {
 		return NGX_ERROR;
 	}
 
@@ -295,6 +329,52 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 {
 	ngx_http_ip_blocker_loc_conf_st *conf;
 	ngx_http_core_loc_conf_t *clcf;
+	ngx_http_ip_blocker_ruleset_st *rule;
+	size_t i;
+	ngx_int_t rc, out_rc;
+
+	conf = ngx_http_get_module_loc_conf(r, ngx_http_ip_blocker_module);
+	if (!conf || !conf->enabled) {
+		return NGX_DECLINED;
+	}
+
+	clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+
+	out_rc = NGX_DECLINED;
+
+	rule = conf->rules.elts;
+	for (i = 0; i < conf->rules.nelts; i++) {
+		rc = ngx_ip_blocker_process_rule(r, &rule[i]);
+
+		if (rc == NGX_DECLINED) {
+			continue;
+		}
+
+		if (clcf->satisfy == NGX_HTTP_SATISFY_ALL) {
+			if (rc == NGX_OK) {
+				continue;
+			}
+
+			return rc;
+		}
+
+		/* clcf->satisfy == NGX_HTTP_SATISFY_ANY */
+		switch (rc) {
+			case NGX_OK:
+				return NGX_OK;
+			case NGX_HTTP_FORBIDDEN:
+			case NGX_HTTP_UNAUTHORIZED:
+				out_rc = rc;
+				break;
+		}
+	}
+
+	return out_rc;
+}
+
+static ngx_int_t ngx_ip_blocker_process_rule(ngx_http_request_t *r, ngx_http_ip_blocker_ruleset_st *rule)
+{
+	ngx_http_core_loc_conf_t *clcf;
 	u_char *base, *addr;
 	size_t len, addr_len;
 	struct sockaddr_in *sin;
@@ -303,19 +383,15 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 #endif /* NGX_HAVE_INET6 */
 	int (*compare)(const void *a, const void *b);
 
-	conf = ngx_http_get_module_loc_conf(r, ngx_http_ip_blocker_module);
-	if (!conf || !conf->enabled) {
-		return NGX_DECLINED;
-	}
-
-	if (conf->addr == MAP_FAILED || conf->size < sizeof(ngx_ip_blocker_shm_st)) {
+	if (rule->addr == MAP_FAILED || rule->size < sizeof(ngx_ip_blocker_shm_st)) {
 		return NGX_ERROR;
 	}
 
-	ngx_ip_blocker_rwlock_rlock(&conf->addr->lock);
+	ngx_ip_blocker_rwlock_rlock(&rule->addr->lock);
 
 	/* runlock is called inside of remap iff NGX_ERROR is returned */
-	if (ngx_http_ip_blocker_remap(conf, r->connection->log) != NGX_OK) {
+	if (rule->revision != rule->addr->revision
+		&& ngx_http_ip_blocker_remap(rule, r->connection->log) != NGX_OK) {
 		return NGX_ERROR;
 	}
 
@@ -323,8 +399,8 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 		case AF_INET:
 			sin = (struct sockaddr_in *)r->connection->sockaddr;
 
-			base = (u_char *)conf->addr + conf->addr->ip4.base;
-			len = conf->addr->ip4.len;
+			base = (u_char *)rule->addr + rule->addr->ip4.base;
+			len = rule->addr->ip4.len;
 
 			addr = (u_char *)&sin->sin_addr.s_addr;
 			addr_len = 4;
@@ -339,16 +415,16 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 			addr_len = 16;
 
 			if (IN6_IS_ADDR_V4MAPPED(&sin6->sin6_addr)) {
-				base = (u_char *)conf->addr + conf->addr->ip4.base;
-				len = conf->addr->ip4.len;
+				base = (u_char *)rule->addr + rule->addr->ip4.base;
+				len = rule->addr->ip4.len;
 
 				addr += 12;
 				addr_len -= 12;
 
 				compare = ngx_http_ip_blocker_ip4_compare;
 			} else {
-				base = (u_char *)conf->addr + conf->addr->ip6.base;
-				len = conf->addr->ip6.len;
+				base = (u_char *)rule->addr + rule->addr->ip6.base;
+				len = rule->addr->ip6.len;
 
 				compare = ngx_http_ip_blocker_ip6_compare;
 			}
@@ -356,34 +432,36 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 			break;
 #endif /* NGX_HAVE_INET6 */
 		default:
-			ngx_ip_blocker_rwlock_runlock(&conf->addr->lock);
+			ngx_ip_blocker_rwlock_runlock(&rule->addr->lock);
 			return NGX_DECLINED;
 	}
 
-	if (!len || !bsearch(addr, base, len / addr_len, addr_len, compare)) {
-		ngx_ip_blocker_rwlock_runlock(&conf->addr->lock);
+	if (len && bsearch(addr, base, len / addr_len, addr_len, compare)) {
+		/* remote address found in block list */
+		ngx_ip_blocker_rwlock_runlock(&rule->addr->lock);
 
+		if (rule->addr->whitelist) {
+			return NGX_OK;
+		}
+
+		clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+		if (clcf->satisfy == NGX_HTTP_SATISFY_ALL) {
+			ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+				"access forbidden by rule");
+		}
+
+		return NGX_HTTP_FORBIDDEN;
+	} else {
 		/* remote address not found in block list */
-		if (conf->addr->whitelist) {
+		ngx_ip_blocker_rwlock_runlock(&rule->addr->lock);
+
+		clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+		if (rule->addr->whitelist && clcf->satisfy == NGX_HTTP_SATISFY_ALL) {
 			return NGX_HTTP_FORBIDDEN;
 		} else {
 			return NGX_DECLINED;
 		}
 	}
-
-	ngx_ip_blocker_rwlock_runlock(&conf->addr->lock);
-
-	/* remote address found in block list */
-	if (conf->addr->whitelist) {
-		return NGX_OK;
-	}
-
-	clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
-	if (clcf->satisfy == NGX_HTTP_SATISFY_ALL) {
-		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "access forbidden by rule");
-	}
-
-	return NGX_HTTP_FORBIDDEN;
 }
 
 static int ngx_http_ip_blocker_ip4_compare(const void *a, const void *b)
