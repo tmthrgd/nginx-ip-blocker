@@ -17,6 +17,8 @@ typedef struct {
 		volatile size_t len;
 	} ip4, ip6;
 
+	unsigned whitelist;
+
 	ngx_ip_blocker_rwlock_st lock;
 
 	volatile uint32_t revision;

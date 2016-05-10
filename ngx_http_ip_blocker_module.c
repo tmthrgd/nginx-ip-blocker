@@ -299,12 +299,20 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 		ngx_ip_blocker_rwlock_runlock(&conf->addr->lock);
 
 		/* remote address not found in block list */
-		return NGX_DECLINED;
+		if (conf->addr->whitelist) {
+			return NGX_HTTP_FORBIDDEN;
+		} else {
+			return NGX_DECLINED;
+		}
 	}
 
 	ngx_ip_blocker_rwlock_runlock(&conf->addr->lock);
 
 	/* remote address found in block list */
+	if (conf->addr->whitelist) {
+		return NGX_OK;
+	}
+
 	clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 	if (clcf->satisfy == NGX_HTTP_SATISFY_ALL) {
 		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "access forbidden by rule");
