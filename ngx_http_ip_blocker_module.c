@@ -242,7 +242,7 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 	int (*compare)(const void *a, const void *b);
 
 	conf = ngx_http_get_module_loc_conf(r, ngx_http_ip_blocker_module);
-	if (!conf || !conf->name.len) {
+	if (!conf || conf->addr == MAP_FAILED) {
 		return NGX_DECLINED;
 	}
 
