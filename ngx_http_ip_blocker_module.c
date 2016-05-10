@@ -207,6 +207,9 @@ static void ngx_http_ip_blocker_cleanup(void *data)
 
 	if (conf->addr != MAP_FAILED) {
 		munmap(conf->addr, conf->size);
+
+		conf->addr = MAP_FAILED;
+		conf->size = 0; /* not strictly needed */
 	}
 
 	if (conf->fd != -1) {
