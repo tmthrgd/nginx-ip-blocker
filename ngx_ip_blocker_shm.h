@@ -4,7 +4,11 @@
 #define NGX_IP_BLOCKER_MAX_READERS (1 << 30)
 
 typedef struct {
-	// mutex w;                    // held if there are pending writers
+	sem_t sem;
+} ngx_ip_blocker_mutex_st;
+
+typedef struct {
+	ngx_ip_blocker_mutex_st w;     // held if there are pending writers
 	sem_t writer_sem;              // semaphore for writers to wait for completing readers
 	sem_t reader_sem;              // semaphore for readers to wait for completing writers
 	volatile int32_t reader_count; // number of pending readers
