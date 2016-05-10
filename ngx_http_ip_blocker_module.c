@@ -212,6 +212,8 @@ static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_loc_co
 		ngx_log_t *log)
 {
 	uint32_t revision;
+	ngx_ip_blocker_shm_st *addr;
+	size_t size;
 	struct stat sb;
 
 	revision = conf->addr->revision;
@@ -221,18 +223,20 @@ static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_loc_co
 
 	conf->revision = revision;
 
-	munmap(conf->addr, conf->size);
+	addr = conf->addr;
+	size = conf->size;
 	conf->addr = MAP_FAILED;
+	conf->size = 0; /* not strictly needed */
 
 	if (fstat(conf->fd, &sb) == -1) {
 		ngx_log_error(NGX_LOG_EMERG, log, ngx_errno, "fstat failed");
-		return NGX_ERROR;
+		goto error;
 	}
 
 	conf->addr = mmap(NULL, sb.st_size, PROT_READ|PROT_WRITE, MAP_SHARED, conf->fd, 0);
 	if (conf->addr == MAP_FAILED) {
 		ngx_log_error(NGX_LOG_EMERG, log, ngx_errno, "mmap failed");
-		return NGX_ERROR;
+		goto error;
 	}
 
 	conf->size = sb.st_size;
@@ -252,10 +256,21 @@ static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_loc_co
 		conf->addr = MAP_FAILED;
 
 		ngx_log_error(NGX_LOG_EMERG, log, 0, "invalid shared memory");
-		return NGX_ERROR;
+		goto error;
 	}
 
+	munmap(addr, size);
 	return NGX_OK;
+
+error:
+	if (!conf->size || conf->size >= sizeof(ngx_ip_blocker_shm_st)) {
+		ngx_ip_blocker_rwlock_runlock(&addr->lock);
+	} else {
+		ngx_log_error(NGX_LOG_EMERG, log, 0, "failed to release read lock");
+	}
+
+	munmap(addr, size);
+	return NGX_ERROR;
 }
 
 static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
@@ -281,9 +296,8 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 
 	ngx_ip_blocker_rwlock_rlock(&conf->addr->lock);
 
+	/* runlock is called inside of remap iff NGX_ERROR is returned */
 	if (ngx_http_ip_blocker_remap(conf, r->connection->log) != NGX_OK) {
-		ngx_ip_blocker_rwlock_runlock(&conf->addr->lock);
-
 		return NGX_ERROR;
 	}
 
