@@ -18,6 +18,8 @@ typedef struct {
 	/* fd may have been truncated behind our backs, be warned */
 	ngx_ip_blocker_shm_st *addr;
 	size_t size;
+
+	uint32_t revision;
 } ngx_http_ip_blocker_loc_conf_st;
 
 static ngx_int_t ngx_http_ip_blocker_init(ngx_conf_t *cf);
@@ -159,6 +161,8 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 
 	conf->size = sb.st_size;
 
+	conf->revision = ngx_atomic_fetch_add(&conf->addr->revision, 0);
+
 	assert(conf->size >= sizeof(ngx_ip_blocker_shm_st)
 		&& conf->size >= sizeof(ngx_ip_blocker_shm_st)
 			+ conf->addr->ip4.len + conf->addr->ip6.len
@@ -188,12 +192,12 @@ static void ngx_http_ip_blocker_cleanup(void *data)
 static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_loc_conf_st *conf,
 		ngx_log_t *log)
 {
+	uint32_t revision;
 	ngx_ip_blocker_shm_st *addr;
 	struct stat sb;
 
-	if (conf->size >= sizeof(ngx_ip_blocker_shm_st) + conf->addr->ip4.len + conf->addr->ip6.len
-		&& conf->addr->ip4.base + conf->addr->ip4.len <= conf->size
-		&& conf->addr->ip6.base + conf->addr->ip6.len <= conf->size) {
+	revision = ngx_atomic_fetch_add(&conf->addr->revision, 0);
+	if (revision == conf->revision) {
 		return NGX_OK;
 	}
 

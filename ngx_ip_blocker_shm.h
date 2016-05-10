@@ -18,4 +18,6 @@ typedef struct {
 	} ip4, ip6;
 
 	ngx_ip_blocker_rwlock_st lock;
+
+	volatile uint32_t revision;
 } ngx_ip_blocker_shm_st;
