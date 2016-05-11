@@ -45,6 +45,7 @@ static ngx_int_t ngx_ip_blocker_process_rule(ngx_http_request_t *r, ngx_http_ip_
 static int ngx_http_ip_blocker_ip4_compare(const void *a, const void *b);
 #if NGX_HAVE_INET6
 static int ngx_http_ip_blocker_ip6_compare(const void *a, const void *b);
+static int ngx_http_ip_blocker_ip6route_compare(const void *a, const void *b);
 #endif /* NGX_HAVE_INET6 */
 
 static ngx_inline void ngx_ip_blocker_rwlock_rlock(ngx_ip_blocker_rwlock_st *rw);
@@ -302,15 +303,19 @@ static ngx_inline ngx_int_t ngx_http_ip_blocker_check_shm(ngx_http_ip_blocker_ru
 {
 	if (rule->size < sizeof(ngx_ip_blocker_shm_st)
 		|| rule->size < sizeof(ngx_ip_blocker_shm_st)
-			+ rule->addr->ip4.len + rule->addr->ip6.len
+			+ rule->addr->ip4.len + rule->addr->ip6.len + rule->addr->ip6route.len
 		|| (rule->addr->ip4.len
 			&& rule->addr->ip4.base < (ssize_t)sizeof(ngx_ip_blocker_shm_st))
 		|| (rule->addr->ip6.len
 			&& rule->addr->ip6.base < (ssize_t)sizeof(ngx_ip_blocker_shm_st))
+		|| (rule->addr->ip6route.len
+			&& rule->addr->ip6route.base < (ssize_t)sizeof(ngx_ip_blocker_shm_st))
 		|| rule->addr->ip4.base + rule->addr->ip4.len > rule->size
 		|| rule->addr->ip6.base + rule->addr->ip6.len > rule->size
+		|| rule->addr->ip6route.base + rule->addr->ip6route.len > rule->size
 		|| rule->addr->ip4.len % 4 != 0
-		|| rule->addr->ip6.len % 16 != 0) {
+		|| rule->addr->ip6.len % 16 != 0
+		|| rule->addr->ip6route.len % 8 != 0) {
 		return NGX_ERROR;
 	}
 
@@ -438,6 +443,7 @@ static ngx_int_t ngx_ip_blocker_process_rule(ngx_http_request_t *r, ngx_http_ip_
 			return NGX_ERROR;
 	}
 
+search:
 	if (len && bsearch(addr, base, len / addr_len, addr_len, compare)) {
 		/* remote address found in block list */
 		ngx_ip_blocker_rwlock_runlock(&rule->addr->lock);
@@ -453,6 +459,16 @@ static ngx_int_t ngx_ip_blocker_process_rule(ngx_http_request_t *r, ngx_http_ip_
 		}
 
 		return NGX_HTTP_FORBIDDEN;
+#if NGX_HAVE_INET6
+	} else if (addr_len == 16) {
+		base = (u_char *)rule->addr + rule->addr->ip6route.base;
+		len = rule->addr->ip6route.len;
+
+		addr_len = 8;
+
+		compare = ngx_http_ip_blocker_ip6route_compare;
+		goto search;
+#endif /* NGX_HAVE_INET6 */
 	} else {
 		/* remote address not found in block list */
 		ngx_ip_blocker_rwlock_runlock(&rule->addr->lock);
@@ -475,6 +491,11 @@ static int ngx_http_ip_blocker_ip4_compare(const void *a, const void *b)
 static int ngx_http_ip_blocker_ip6_compare(const void *a, const void *b)
 {
 	return memcmp(a, b, 16);
+}
+
+static int ngx_http_ip_blocker_ip6route_compare(const void *a, const void *b)
+{
+	return memcmp(a, b, 8);
 }
 #endif /* NGX_HAVE_INET6 */
 

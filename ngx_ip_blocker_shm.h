@@ -19,7 +19,7 @@ typedef struct {
 	struct {
 		volatile ssize_t base;
 		volatile size_t len;
-	} ip4, ip6;
+	} ip4, ip6, ip6route;
 
 	unsigned whitelist;
 
