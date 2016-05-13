@@ -4,8 +4,6 @@
 
 #include "ngx_ip_blocker_shm.h"
 
-#include <assert.h>          // For assert
-#include <semaphore.h>       // For sem_*
 #include <fcntl.h>           // For O_* constants
 #include <sys/stat.h>        // For mode constants
 #include <sys/mman.h>        // For shm_*
@@ -48,8 +46,8 @@ static int ngx_http_ip_blocker_ip6_compare(const void *a, const void *b);
 static int ngx_http_ip_blocker_ip6route_compare(const void *a, const void *b);
 #endif /* NGX_HAVE_INET6 */
 
-static ngx_inline void ngx_ip_blocker_rwlock_rlock(ngx_ip_blocker_rwlock_st *rw);
-static ngx_inline void ngx_ip_blocker_rwlock_runlock(ngx_ip_blocker_rwlock_st *rw);
+void ngx_ip_blocker_rwlock_rlock(ngx_ip_blocker_rwlock_st *rw);
+void ngx_ip_blocker_rwlock_runlock(ngx_ip_blocker_rwlock_st *rw);
 
 static ngx_command_t ngx_http_ip_blocker_module_commands[] = {
 	{ ngx_string("ip_blocker"),
@@ -498,32 +496,3 @@ static int ngx_http_ip_blocker_ip6route_compare(const void *a, const void *b)
 	return memcmp(a, b, 8);
 }
 #endif /* NGX_HAVE_INET6 */
-
-// rlock locks rw for reading.
-static ngx_inline void ngx_ip_blocker_rwlock_rlock(ngx_ip_blocker_rwlock_st *rw)
-{
-	if (ngx_atomic_fetch_add(&rw->reader_count, 1) < -1) {
-		// A writer is pending, wait for it.
-		sem_wait(&rw->writer_sem);
-	}
-}
-
-// runlock undoes a single rlock call;
-// it does not affect other simultaneous readers.
-// It is a run-time error if rw is not locked for reading
-// on entry to runlock.
-static ngx_inline void ngx_ip_blocker_rwlock_runlock(ngx_ip_blocker_rwlock_st *rw)
-{
-	int32_t r;
-
-	r = ngx_atomic_fetch_add(&rw->reader_count, -1);
-	if (r < 1) {
-		assert(r != 0 && r != -NGX_IP_BLOCKER_MAX_READERS);
-
-		// A writer is pending.
-		if (ngx_atomic_fetch_add(&rw->reader_wait, -1) == 1) {
-			// The last reader unblocks the writer.
-			sem_post(&rw->writer_sem);
-		}
-	}
-}

@@ -6,13 +6,13 @@ if [ -n "$ngx_module_link" ]; then
 	ngx_module_name=ngx_http_ip_blocker_module
 	ngx_module_incs=
 	ngx_module_deps=
-	ngx_module_srcs="$ngx_addon_dir/ngx_http_ip_blocker_module.c"
+	ngx_module_srcs="$ngx_addon_dir/ngx_http_ip_blocker_module.c $ngx_addon_dir/ngx_http_ip_blocker_rwlock.c"
 	ngx_module_libs="-lrt"
 
 	. auto/module
 else
 	HTTP_MODULES="$HTTP_MODULES ngx_http_ip_blocker_module"
-	NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_http_ip_blocker_module.c"
+	NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_http_ip_blocker_module.c $ngx_addon_dir/ngx_http_ip_blocker_rwlock.c"
 
 	CORE_LIBS="$CORE_LIBS -lrt"
 fi
