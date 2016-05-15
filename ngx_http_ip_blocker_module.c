@@ -46,8 +46,8 @@ static int ngx_http_ip_blocker_ip6_compare(const void *a, const void *b);
 static int ngx_http_ip_blocker_ip6route_compare(const void *a, const void *b);
 #endif /* NGX_HAVE_INET6 */
 
-void ngx_ip_blocker_rwlock_rlock(ngx_ip_blocker_rwlock_st *rw);
-void ngx_ip_blocker_rwlock_runlock(ngx_ip_blocker_rwlock_st *rw);
+ngx_int_t ngx_ip_blocker_rwlock_rlock(ngx_ip_blocker_rwlock_st *rw);
+ngx_int_t ngx_ip_blocker_rwlock_runlock(ngx_ip_blocker_rwlock_st *rw);
 
 static ngx_command_t ngx_http_ip_blocker_module_commands[] = {
 	{ ngx_string("ip_blocker"),
@@ -195,7 +195,9 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 			return NGX_CONF_ERROR;
 		}
 
-		ngx_ip_blocker_rwlock_rlock(&rule->addr->lock);
+		if (ngx_ip_blocker_rwlock_rlock(&rule->addr->lock) != NGX_OK) {
+			return NGX_CONF_ERROR;
+		}
 
 		rule->revision = rule->addr->revision;
 
@@ -220,7 +222,9 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 			return NGX_CONF_ERROR;
 		}
 
-		ngx_ip_blocker_rwlock_runlock(&rule->addr->lock);
+		if (ngx_ip_blocker_rwlock_runlock(&rule->addr->lock) != NGX_OK) {
+			return NGX_CONF_ERROR;
+		}
 	}
 
 	return NGX_CONF_OK;
@@ -392,7 +396,9 @@ static ngx_int_t ngx_ip_blocker_process_rule(ngx_http_request_t *r, ngx_http_ip_
 		return NGX_ERROR;
 	}
 
-	ngx_ip_blocker_rwlock_rlock(&rule->addr->lock);
+	if (ngx_ip_blocker_rwlock_rlock(&rule->addr->lock) != NGX_OK) {
+		return NGX_ERROR;
+	}
 
 	/* runlock is called inside of remap iff NGX_ERROR is returned */
 	if (rule->revision != rule->addr->revision
@@ -444,7 +450,9 @@ static ngx_int_t ngx_ip_blocker_process_rule(ngx_http_request_t *r, ngx_http_ip_
 search:
 	if (len && bsearch(addr, base, len / addr_len, addr_len, compare)) {
 		/* remote address found in block list */
-		ngx_ip_blocker_rwlock_runlock(&rule->addr->lock);
+		if (ngx_ip_blocker_rwlock_runlock(&rule->addr->lock) != NGX_OK) {
+			return NGX_ERROR;
+		}
 
 		if (rule->addr->whitelist) {
 			return NGX_OK;
@@ -469,7 +477,9 @@ search:
 #endif /* NGX_HAVE_INET6 */
 	} else {
 		/* remote address not found in block list */
-		ngx_ip_blocker_rwlock_runlock(&rule->addr->lock);
+		if (ngx_ip_blocker_rwlock_runlock(&rule->addr->lock) != NGX_OK) {
+			return NGX_ERROR;
+		}
 
 		clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 		if (rule->addr->whitelist && clcf->satisfy == NGX_HTTP_SATISFY_ALL) {

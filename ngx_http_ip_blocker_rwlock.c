@@ -12,19 +12,23 @@
 #include <semaphore.h>       // For sem_*
 
 // rlock locks rw for reading.
-ngx_inline void ngx_ip_blocker_rwlock_rlock(ngx_ip_blocker_rwlock_st *rw)
+ngx_inline ngx_int_t ngx_ip_blocker_rwlock_rlock(ngx_ip_blocker_rwlock_st *rw)
 {
 	if (ngx_atomic_fetch_add(&rw->reader_count, 1) < -1) {
 		// A writer is pending, wait for it.
-		sem_wait(&rw->reader_sem);
+		if (sem_wait(&rw->reader_sem) != 0) {
+			return NGX_ERROR;
+		}
 	}
+
+	return NGX_OK;
 }
 
 // runlock undoes a single rlock call;
 // it does not affect other simultaneous readers.
 // It is a run-time error if rw is not locked for reading
 // on entry to runlock.
-ngx_inline void ngx_ip_blocker_rwlock_runlock(ngx_ip_blocker_rwlock_st *rw)
+ngx_inline ngx_int_t ngx_ip_blocker_rwlock_runlock(ngx_ip_blocker_rwlock_st *rw)
 {
 	int32_t r;
 
@@ -35,7 +39,11 @@ ngx_inline void ngx_ip_blocker_rwlock_runlock(ngx_ip_blocker_rwlock_st *rw)
 		// A writer is pending.
 		if (ngx_atomic_fetch_add(&rw->reader_wait, -1) == 1) {
 			// The last reader unblocks the writer.
-			sem_post(&rw->writer_sem);
+			if (sem_post(&rw->writer_sem) != 0) {
+				return NGX_ERROR;
+			}
 		}
 	}
+
+	return NGX_OK;
 }
