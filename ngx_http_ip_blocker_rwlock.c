@@ -16,7 +16,7 @@ ngx_inline void ngx_ip_blocker_rwlock_rlock(ngx_ip_blocker_rwlock_st *rw)
 {
 	if (ngx_atomic_fetch_add(&rw->reader_count, 1) < -1) {
 		// A writer is pending, wait for it.
-		sem_wait(&rw->writer_sem);
+		sem_wait(&rw->reader_sem);
 	}
 }
 
