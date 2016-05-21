@@ -9,14 +9,22 @@
 #include <sys/mman.h>        // For shm_*
 
 typedef struct {
+	ngx_str_t name;
+
+	ngx_int_t code;
+} ngx_http_ip_blocker_directive_st;
+
+typedef struct {
 	int enabled;
 
-	ngx_array_t *name;
+	ngx_array_t *directives;
 
 	ngx_array_t rules;
 } ngx_http_ip_blocker_loc_conf_st;
 
 typedef struct {
+	ngx_int_t code;
+
 	int fd;
 
 	/* fd may have been truncated behind our backs, be warned */
@@ -27,6 +35,8 @@ typedef struct {
 } ngx_http_ip_blocker_ruleset_st;
 
 static ngx_int_t ngx_http_ip_blocker_init(ngx_conf_t *cf);
+
+static char *ngx_http_ip_blocker_set_directive_slot(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 
 static void *ngx_http_ip_blocker_create_loc_conf(ngx_conf_t *cf);
 static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
@@ -51,10 +61,10 @@ ngx_int_t ngx_ip_blocker_rwlock_runlock(ngx_ip_blocker_rwlock_st *rw);
 
 static ngx_command_t ngx_http_ip_blocker_module_commands[] = {
 	{ ngx_string("ip_blocker"),
-	  NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LMT_CONF|NGX_CONF_TAKE1,
-	  ngx_conf_set_str_array_slot,
+	  NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LMT_CONF|NGX_CONF_TAKE12,
+	  ngx_http_ip_blocker_set_directive_slot,
 	  NGX_HTTP_LOC_CONF_OFFSET,
-	  offsetof(ngx_http_ip_blocker_loc_conf_st, name),
+	  offsetof(ngx_http_ip_blocker_loc_conf_st, directives),
 	  NULL },
 
 	ngx_null_command
@@ -105,6 +115,53 @@ static ngx_int_t ngx_http_ip_blocker_init(ngx_conf_t *cf)
 	return NGX_OK;
 }
 
+static char *ngx_http_ip_blocker_set_directive_slot(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+	char *p = conf;
+	ngx_str_t *value;
+	ngx_http_ip_blocker_directive_st *dir;
+	ngx_array_t **a;
+	ngx_conf_post_t *post;
+
+	a = (ngx_array_t **)(p + cmd->offset);
+
+	if (*a == NGX_CONF_UNSET_PTR) {
+		*a = ngx_array_create(cf->pool, 4, sizeof(ngx_str_t));
+		if (!*a) {
+			return NGX_CONF_ERROR;
+		}
+	}
+
+	dir = ngx_array_push(*a);
+	if (!dir) {
+		return NGX_CONF_ERROR;
+	}
+
+	value = cf->args->elts;
+
+	dir->name = value[1];
+
+	if (cf->args->nelts == 3) {
+		if (ngx_strncmp(value[2].data, "code=", 5) == 0) {
+			dir->code = ngx_atoi(value[2].data + 5, value[2].len - 5);
+			if (dir->code == NGX_ERROR) {
+				return "invalid number";
+			}
+		} else {
+			ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "unknown parameter \"%*s\"",
+				value[2].len, value[2].data);
+			return NGX_CONF_ERROR;
+		}
+	}
+
+	if (cmd->post) {
+		post = cmd->post;
+		return post->post_handler(cf, post, dir);
+	}
+
+	return NGX_CONF_OK;
+}
+
 static void *ngx_http_ip_blocker_create_loc_conf(ngx_conf_t *cf)
 {
 	ngx_http_ip_blocker_loc_conf_st *conf;
@@ -120,7 +177,7 @@ static void *ngx_http_ip_blocker_create_loc_conf(ngx_conf_t *cf)
 	 *     conf->enabled = 0;
 	 */
 
-	conf->name = NGX_CONF_UNSET_PTR;
+	conf->directives = NGX_CONF_UNSET_PTR;
 	return conf;
 }
 
@@ -128,26 +185,26 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 {
 	const ngx_http_ip_blocker_loc_conf_st *prev = parent;
 	ngx_http_ip_blocker_loc_conf_st *conf = child;
-	ngx_str_t *name;
+	ngx_http_ip_blocker_directive_st *dir;
 	ngx_http_ip_blocker_ruleset_st *rule;
 	ngx_pool_cleanup_t *cln;
 	size_t i;
 	struct stat sb;
 
-	ngx_conf_merge_ptr_value(conf->name, prev->name, NULL);
+	ngx_conf_merge_ptr_value(conf->directives, prev->directives, NULL);
 
-	if (!conf->name || !conf->name->nelts) {
+	if (!conf->directives || !conf->directives->nelts) {
 		return NGX_CONF_OK;
 	}
 
-	name = conf->name->elts;
-	for (i = 0; i < conf->name->nelts; i++) {
-		if (ngx_strcmp(name[i].data, "off") == 0) {
+	dir = conf->directives->elts;
+	for (i = 0; i < conf->directives->nelts; i++) {
+		if (ngx_strcmp(dir[i].name.data, "off") == 0) {
 			return NGX_CONF_OK;
 		}
 	}
 
-	if (ngx_array_init(&conf->rules, cf->pool, conf->name->nelts,
+	if (ngx_array_init(&conf->rules, cf->pool, conf->directives->nelts,
 			sizeof(ngx_http_ip_blocker_ruleset_st)) != NGX_OK) {
 		return NGX_CONF_ERROR;
 	}
@@ -162,7 +219,7 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 
 	conf->enabled = 1;
 
-	for (i = 0; i < conf->name->nelts; i++) {
+	for (i = 0; i < conf->directives->nelts; i++) {
 		rule = ngx_array_push(&conf->rules);
 		if (!rule) {
 			return NGX_CONF_ERROR;
@@ -171,7 +228,13 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 		ngx_memzero(rule, sizeof(ngx_http_ip_blocker_ruleset_st));
 		rule->addr = MAP_FAILED;
 
-		rule->fd = shm_open((const char *)name[i].data, O_RDWR, 0);
+		if (dir[i].code) {
+			rule->code = dir[i].code;
+		} else {
+			rule->code = NGX_HTTP_FORBIDDEN;
+		}
+
+		rule->fd = shm_open((const char *)dir[i].name.data, O_RDWR, 0);
 		if (rule->fd == -1) {
 			ngx_log_error(NGX_LOG_EMERG, cf->log, ngx_errno, "shm_open failed");
 			return NGX_CONF_ERROR;
@@ -370,13 +433,10 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 		}
 
 		/* clcf->satisfy == NGX_HTTP_SATISFY_ANY */
-		switch (rc) {
-			case NGX_OK:
-				return NGX_OK;
-			case NGX_HTTP_FORBIDDEN:
-			case NGX_HTTP_UNAUTHORIZED:
-				out_rc = rc;
-				break;
+		if (rc == NGX_OK) {
+			return NGX_OK;
+		} else if (rc == rule[i].code) {
+			out_rc = rc;
 		}
 	}
 
@@ -466,7 +526,7 @@ search:
 				"access forbidden by rule");
 		}
 
-		return NGX_HTTP_FORBIDDEN;
+		return rule->code;
 #if NGX_HAVE_INET6
 	} else if (addr_len == 16) {
 		base = (u_char *)rule->addr + rule->addr->ip6route.base;
@@ -485,7 +545,7 @@ search:
 
 		clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 		if (rule->addr->whitelist && clcf->satisfy == NGX_HTTP_SATISFY_ALL) {
-			return NGX_HTTP_FORBIDDEN;
+			return rule->code;
 		} else {
 			return NGX_DECLINED;
 		}
