@@ -357,6 +357,8 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 
 		if (rc == NGX_DECLINED) {
 			continue;
+		} else if (rc == NGX_ERROR) {
+			return NGX_ERROR;
 		}
 
 		if (clcf->satisfy == NGX_HTTP_SATISFY_ALL) {
