@@ -245,6 +245,8 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 			rule->code = NGX_HTTP_FORBIDDEN;
 		}
 
+		rule->whitelist = dir[i].whitelist;
+
 		rule->fd = shm_open((const char *)dir[i].name.data, O_RDWR, 0);
 		if (rule->fd == -1) {
 			ngx_log_error(NGX_LOG_EMERG, cf->log, ngx_errno, "shm_open failed");
