@@ -12,6 +12,7 @@ typedef struct {
 	ngx_str_t name;
 
 	ngx_int_t code;
+	ngx_flag_t whitelist;
 } ngx_http_ip_blocker_directive_st;
 
 typedef struct {
@@ -24,6 +25,7 @@ typedef struct {
 
 typedef struct {
 	ngx_int_t code;
+	ngx_flag_t whitelist;
 
 	int fd;
 
@@ -61,7 +63,7 @@ ngx_int_t ngx_ip_blocker_rwlock_runlock(ngx_ip_blocker_rwlock_st *rw);
 
 static ngx_command_t ngx_http_ip_blocker_module_commands[] = {
 	{ ngx_string("ip_blocker"),
-	  NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LMT_CONF|NGX_CONF_TAKE12,
+	  NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_HTTP_LMT_CONF|NGX_CONF_1MORE,
 	  ngx_http_ip_blocker_set_directive_slot,
 	  NGX_HTTP_LOC_CONF_OFFSET,
 	  offsetof(ngx_http_ip_blocker_loc_conf_st, directives),
@@ -122,6 +124,7 @@ static char *ngx_http_ip_blocker_set_directive_slot(ngx_conf_t *cf, ngx_command_
 	ngx_http_ip_blocker_directive_st *dir;
 	ngx_array_t **a;
 	ngx_conf_post_t *post;
+	ngx_uint_t n;
 
 	a = (ngx_array_t **)(p + cmd->offset);
 
@@ -141,17 +144,25 @@ static char *ngx_http_ip_blocker_set_directive_slot(ngx_conf_t *cf, ngx_command_
 
 	dir->name = value[1];
 
-	if (cf->args->nelts == 3) {
-		if (ngx_strncmp(value[2].data, "code=", 5) == 0) {
-			dir->code = ngx_atoi(value[2].data + 5, value[2].len - 5);
+	for (n = 2; n < cf->args->nelts; n++) {
+		if (ngx_strncmp(value[n].data, "code=", 5) == 0) {
+			dir->code = ngx_atoi(value[n].data + 5, value[n].len - 5);
 			if (dir->code == NGX_ERROR) {
-				return "invalid number";
+				ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+					"invalid code \"%V\"", &value[n]);
+				return NGX_CONF_ERROR;
 			}
-		} else {
-			ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "unknown parameter \"%*s\"",
-				value[2].len, value[2].data);
-			return NGX_CONF_ERROR;
+
+			continue;
 		}
+
+		if (ngx_strcmp(value[n].data, "whitelist") == 0) {
+			dir->whitelist = 1;
+			continue;
+	        }
+
+		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "invalid parameter \"%V\"", &value[n]);
+		return NGX_CONF_ERROR;
 	}
 
 	if (cmd->post) {
@@ -516,7 +527,7 @@ search:
 			return NGX_ERROR;
 		}
 
-		if (rule->addr->whitelist) {
+		if (rule->whitelist) {
 			return NGX_OK;
 		}
 
@@ -544,7 +555,7 @@ search:
 		}
 
 		clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
-		if (rule->addr->whitelist && clcf->satisfy == NGX_HTTP_SATISFY_ALL) {
+		if (rule->whitelist && clcf->satisfy == NGX_HTTP_SATISFY_ALL) {
 			return rule->code;
 		} else {
 			return NGX_DECLINED;
