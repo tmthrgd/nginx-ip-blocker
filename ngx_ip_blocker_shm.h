@@ -1,3 +1,8 @@
+// Copyright 2016 Tom Thorogood. All rights reserved.
+// Use of this source code is governed by a
+// Modified BSD License license that can be found in
+// the LICENSE file.
+
 #include <stdint.h>         // For int32_t
 #include <semaphore.h>      // For sem_t
 
