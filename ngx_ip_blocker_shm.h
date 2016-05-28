@@ -25,3 +25,5 @@ typedef struct {
 
 	volatile uint32_t revision;
 } ngx_ip_blocker_shm_st;
+
+// -*- mode: c;-*-
