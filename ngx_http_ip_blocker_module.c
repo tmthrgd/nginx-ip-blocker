@@ -271,7 +271,7 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 
 		rule->size = sb.st_size;
 
-		if (rule->size < sizeof(ngx_ip_blocker_shm_st)) {
+		if (rule->size < sizeof(ngx_ip_blocker_shm_st) || rule->addr->version != 1) {
 			ngx_log_error(NGX_LOG_EMERG, cf->log, 0, "invalid shared memory");
 			return NGX_CONF_ERROR;
 		}

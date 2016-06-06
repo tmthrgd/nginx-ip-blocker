@@ -21,14 +21,15 @@ typedef struct {
 } ngx_ip_blocker_rwlock_st;
 
 typedef struct {
-	struct {
-		volatile ssize_t base;
-		volatile size_t len;
-	} ip4, ip6, ip6route;
+	uint32_t version;
+	volatile uint32_t revision;
 
 	ngx_ip_blocker_rwlock_st lock;
 
-	volatile uint32_t revision;
+	struct {
+		volatile size_t base;
+		volatile size_t len;
+	} ip4, ip6, ip6route;
 } ngx_ip_blocker_shm_st;
 
 // -*- mode: c;-*-
