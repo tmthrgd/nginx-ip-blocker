@@ -13,10 +13,10 @@
 #include <sys/stat.h>        // For mode constants
 #include <sys/mman.h>        // For shm_*
 
-#if NGX_PTR_SIZE == 4
-#	define NGX_HTTP_IP_BLOCKER_VERSION 2
+#if NGX_PTR_SIZE == 8
+#	define NGX_HTTP_IP_BLOCKER_VERSION 0x80000001
 #else
-#	define NGX_HTTP_IP_BLOCKER_VERSION 1
+#	define NGX_HTTP_IP_BLOCKER_VERSION 0x00000001
 #endif
 
 typedef struct {
