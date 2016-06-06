@@ -13,6 +13,12 @@
 #include <sys/stat.h>        // For mode constants
 #include <sys/mman.h>        // For shm_*
 
+#if NGX_PTR_SIZE == 4
+#	define NGX_HTTP_IP_BLOCKER_VERSION 2
+#else
+#	define NGX_HTTP_IP_BLOCKER_VERSION 1
+#endif
+
 typedef struct {
 	ngx_str_t name;
 
@@ -271,7 +277,9 @@ static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, vo
 
 		rule->size = sb.st_size;
 
-		if (rule->size < sizeof(ngx_ip_blocker_shm_st) || rule->addr->version != 1) {
+		if (rule->size < sizeof(ngx_ip_blocker_shm_st)
+			|| ngx_atomic_fetch_add(&rule->addr->version, 0)
+				!= NGX_HTTP_IP_BLOCKER_VERSION) {
 			ngx_log_error(NGX_LOG_EMERG, cf->log, 0, "invalid shared memory");
 			return NGX_CONF_ERROR;
 		}
