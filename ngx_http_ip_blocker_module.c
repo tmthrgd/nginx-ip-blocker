@@ -151,6 +151,8 @@ static char *ngx_http_ip_blocker_set_directive_slot(ngx_conf_t *cf, ngx_command_
 		return NGX_CONF_ERROR;
 	}
 
+	ngx_memzero(dir, sizeof(ngx_http_ip_blocker_directive_st));
+
 	value = cf->args->elts;
 
 	dir->name = value[1];
