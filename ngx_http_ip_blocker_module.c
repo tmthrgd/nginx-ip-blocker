@@ -49,7 +49,8 @@ typedef struct {
 
 static ngx_int_t ngx_http_ip_blocker_init(ngx_conf_t *cf);
 
-static char *ngx_http_ip_blocker_set_directive_slot(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+static char *ngx_http_ip_blocker_set_directive_slot(ngx_conf_t *cf, ngx_command_t *cmd,
+		void *conf);
 
 static void *ngx_http_ip_blocker_create_loc_conf(ngx_conf_t *cf);
 static char *ngx_http_ip_blocker_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
@@ -61,7 +62,8 @@ static ngx_inline ngx_int_t ngx_http_ip_blocker_remap(ngx_http_ip_blocker_rulese
 static ngx_inline ngx_int_t ngx_http_ip_blocker_check_shm(ngx_http_ip_blocker_ruleset_st *rule);
 
 static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r);
-static ngx_int_t ngx_ip_blocker_process_rule(ngx_http_request_t *r, ngx_http_ip_blocker_ruleset_st *rule);
+static ngx_int_t ngx_ip_blocker_process_rule(ngx_http_request_t *r,
+		ngx_http_ip_blocker_ruleset_st *rule);
 
 static int ngx_http_ip_blocker_ip4_compare(const void *a, const void *b);
 #if NGX_HAVE_INET6
@@ -471,7 +473,8 @@ static ngx_int_t ngx_http_ip_blocker_access_handler(ngx_http_request_t *r)
 	return out_rc;
 }
 
-static ngx_int_t ngx_ip_blocker_process_rule(ngx_http_request_t *r, ngx_http_ip_blocker_ruleset_st *rule)
+static ngx_int_t ngx_ip_blocker_process_rule(ngx_http_request_t *r,
+		ngx_http_ip_blocker_ruleset_st *rule)
 {
 	ngx_http_core_loc_conf_t *clcf;
 	u_char *base, *addr;
