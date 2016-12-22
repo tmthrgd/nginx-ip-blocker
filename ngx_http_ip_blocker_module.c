@@ -142,7 +142,7 @@ static char *ngx_http_ip_blocker_set_directive_slot(ngx_conf_t *cf, ngx_command_
 	a = (ngx_array_t **)(p + cmd->offset);
 
 	if (*a == NGX_CONF_UNSET_PTR) {
-		*a = ngx_array_create(cf->pool, 4, sizeof(ngx_str_t));
+		*a = ngx_array_create(cf->pool, 4, sizeof(ngx_http_ip_blocker_directive_st));
 		if (!*a) {
 			return NGX_CONF_ERROR;
 		}
